@@ -551,7 +551,7 @@ function applyData(d){
 
   reglasList = (d.reglas||[]).map(r=>({patron:String(r.patron||"").toUpperCase(), categoria:r.categoria}));
 
-  fijos = (d.fijos||[]).map(f=>({ id:f.id, nombre:f.nombre, monto:Number(f.monto)||0, dia:f.dia, pagado:truthy(f.pagado_mes) }));
+  fijos = (d.fijos||[]).map(f=>({ id:f.id, nombre:f.nombre, monto:Number(f.monto)||0, dia:f.dia, pagadoMes:String(f.pagado_mes||"") }));
 
   movimientos = (d.movimientos||[]).map(m=>({
     id:m.id, fecha:String(m.fecha||""), hora:m.hora||"", comercio:m.comercio||"", monto:Number(m.monto)||0,
@@ -877,11 +877,16 @@ function saveWish(){
 function renderFijosMini(){
   document.getElementById("fijosMini").innerHTML =
     (fijos.slice(0,4).map(x=>`<div class="fijo-row"><div class="mid"><div class="nm">${x.nombre}</div>
-      <div class="dia">${x.dia?'día '+x.dia:''} · ${x.pagado?'pagado':'pendiente'}</div></div>
+      <div class="dia">${x.dia?'día '+x.dia:''} · ${x.pagadoMes===mesActivo?'pagado':'pendiente'}</div></div>
       <div class="am">${CLP(x.monto)}</div></div>`).join("") || `<p class="muted">Aún no tienes gastos fijos. Agrégalos en Configuraciones.</p>`) +
       `<div style="text-align:center;padding-top:12px"><a style="color:var(--rose-deep);font-size:12.5px;font-weight:600;cursor:pointer" onclick="openConfig('fijos')">Administrar gastos fijos${fijos.length?' ('+fijos.length+')':''}</a></div>`;
 }
-function togglePagado(id){ const f=fijos.find(x=>String(x.id)===String(id)); if(f){ f.pagado=!f.pagado; renderConfig(); renderFijosMini(); } apiPost("togglePagado",{id:id, pagado: f?f.pagado:true}); }
+function togglePagado(id){
+  const f=fijos.find(x=>String(x.id)===String(id));
+  const nuevo = (f && f.pagadoMes===mesActivo) ? "" : mesActivo;
+  if(f){ f.pagadoMes=nuevo; renderConfig(); renderFijosMini(); }
+  apiPost("togglePagado",{id:id, pagado: nuevo});
+}
 
 /* ===== CONFIGURACIONES ===== */
 function openConfig(view){ configView=view; pickMerchant=null; editFijo=null; renderConfig(); go('config'); }
@@ -941,14 +946,14 @@ function renderConfig(){
 
   if(configView==="fijos"){
     body.innerHTML=`
-      <div class="cfg-head"><button class="cfg-back" onclick="cfgBack()">‹</button><h2>Gastos fijos</h2></div>
-      <p class="muted" style="margin-bottom:14px">Toca un gasto para editar su monto, nombre o día. La ✓ marca los que ya pagaste este mes.</p>
+      <div class="cfg-head"><button class="cfg-back" onclick="cfgBack()">‹</button><h2>Cuentas del mes</h2></div>
+      <p class="muted" style="margin-bottom:14px">Tu checklist de cuentas fijas. Marca ✓ la que ya pagaste. Es solo un recordatorio — no afecta tu disponible (eso lo maneja tu saldo).</p>
       ${fijos.map(x=> editFijo===x.id ? fijoForm(x,x.id) : `
         <div class="fijo-card" onclick="openEditFijo('${x.id}')">
           <div style="flex:1"><div class="nm">${x.nombre}</div>
             <div class="dia">${x.dia?'~ día '+x.dia:'sin fecha'} · toca para editar</div></div>
           <div class="am">${CLP(x.monto)}</div>
-          <div class="check ${x.pagado?'done':''}" onclick="event.stopPropagation();togglePagado('${x.id}')">${x.pagado?'✓':''}</div>
+          <div class="check ${x.pagadoMes===mesActivo?'done':''}" onclick="event.stopPropagation();togglePagado('${x.id}')">${x.pagadoMes===mesActivo?'✓':''}</div>
         </div>`).join("")}
       ${editFijo==='new' ? fijoForm({}, 'new') : `<button class="addbtn" onclick="openEditFijo('new')">+ Agregar gasto fijo</button>`}
       <p class="muted" style="margin-top:14px">Tu ahorro (transferencia a inversión) va aparte, como meta del mes.</p>`;
@@ -1074,7 +1079,7 @@ function saveFijo(i){
   const diaRaw=(document.getElementById("fDia").value||"").replace(/[^\d]/g,"");
   const dia=diaRaw?parseInt(diaRaw,10):"";
   if(!nombre||!monto) return;
-  if(i==='new') fijos.push({id:"tmp-"+Date.now(), nombre:nombre, monto:monto, dia:dia, pagado:false});
+  if(i==='new') fijos.push({id:"tmp-"+Date.now(), nombre:nombre, monto:monto, dia:dia, pagadoMes:""});
   else { const f=fijos.find(x=>String(x.id)===String(i)); if(f){ f.nombre=nombre; f.monto=monto; f.dia=dia; } }
   editFijo=null; recompute();
   renderConfig(); renderFijosMini(); renderHero(); renderWish();
