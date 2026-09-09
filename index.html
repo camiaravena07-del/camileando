@@ -480,7 +480,7 @@ let tarjeta = { cupo:0, ult4:"" };
 let categorias = [];
 let fijos = [];
 let movimientos = [];
-let merchantRules = {};
+let reglasList = [];
 let wishlist = [];
 let mesActivo = "";
 
@@ -548,8 +548,7 @@ function applyData(d){
   categorias = (d.categorias||[]).map(c=>c.nombre);
   (d.categorias||[]).forEach(c=>{ if(c.color) catColors[c.nombre]=c.color; else colorFor(c.nombre); });
 
-  merchantRules = {};
-  Object.keys(d.reglas||{}).forEach(k=> merchantRules[String(k).toUpperCase()] = d.reglas[k]);
+  reglasList = (d.reglas||[]).map(r=>({patron:String(r.patron||"").toUpperCase(), categoria:r.categoria}));
 
   fijos = (d.fijos||[]).map(f=>({ id:f.id, nombre:f.nombre, monto:Number(f.monto)||0, dia:f.dia, pagado:truthy(f.pagado_mes) }));
 
@@ -959,18 +958,22 @@ function renderConfig(){
     const list=merchantList();
     body.innerHTML=`
       <div class="cfg-head"><button class="cfg-back" onclick="cfgBack()">‹</button><h2>Clasificar comercios</h2></div>
-      <p class="muted" style="margin-bottom:14px">Del más reciente al más antiguo. Toca un comercio para asignar o cambiar su categoría — se actualiza en todos lados.</p>
+      <p class="muted" style="margin-bottom:14px">Agrupados por su palabra clave, así "Spotify" o "Cabify" se clasifican solos aunque cambie el código. Toca uno, revisa la palabra clave y elige su categoría.</p>
       ${list.map(m=>{
-        const sin=m.cat==="Sin clasificar", open=pickMerchant===m.comercio, esc=m.comercio.replace(/'/g,"\\'");
-        const dt=m.fecha?new Date(m.fecha+"T12:00").toLocaleDateString("es-CL",{day:"2-digit",month:"short"}):"";
+        const sin=m.cat==="Sin clasificar", open=pickMerchant===m.patron, esc=m.patron.replace(/'/g,"\\'");
         return `<div class="merch">
           <div class="top" onclick="openPick('${esc}')">
-            <div class="mid"><div class="nm">${m.comercio}</div><div class="dt">último: ${dt}</div></div>
+            <div class="mid"><div class="nm">${m.patron}</div><div class="dt">ej: ${m.ejemplo} · ${m.n} mov</div></div>
             ${sin?`<span class="badge">Sin clasificar</span>`
                  :`<span class="cur"><span class="dot" style="background:${colorFor(m.cat)}"></span>${m.cat}</span>`}
           </div>
-          ${open?`<div class="pick">${categorias.map(c=>
-            `<button class="chip ${m.cat===c?'on':''}" onclick="assignCat('${esc}','${c.replace(/'/g,"\\'")}')">${c}</button>`).join("")}</div>`:''}
+          ${open?`<div style="border-top:1px solid var(--line);margin-top:12px;padding-top:12px">
+            <div class="wform-lbl" style="margin-top:0">Palabra clave (puedes corregirla)</div>
+            <input class="winput" id="patInput" value="${m.patron.replace(/"/g,'&quot;')}">
+            <div class="wform-lbl">Categoría</div>
+            <div class="pick" style="border-top:none;margin-top:0;padding-top:0">${categorias.map(c=>
+              `<button class="chip ${m.cat===c?'on':''}" onclick="assignCatFromInput('${c.replace(/'/g,"\\'")}')">${c}</button>`).join("")}</div>
+          </div>`:''}
         </div>`;
       }).join("") || `<p class="muted">Aún no hay comercios.</p>`}`;
     return;
@@ -991,23 +994,41 @@ function renderConfig(){
     return;
   }
 }
+function keywordFrom(comercio){
+  let s = String(comercio||"").toUpperCase().trim();
+  s = s.replace(/^(MP\s*\*?|SUC|PAGO|COMPRA|\*)\s*/,"");
+  s = s.split(/\d/)[0];
+  s = s.replace(/[*./,\-]+$/,"").trim();
+  s = s.replace(/\s+[A-Z]{1,2}$/,"").trim();
+  if(!s) s = String(comercio||"").toUpperCase().trim();
+  return s;
+}
 function merchantList(){
   const map={};
   movimientos.filter(esGastoVariable).forEach(m=>{
+    const key=keywordFrom(m.comercio); if(!key) return;
     const cat=catOf(m);
-    if(!map[m.comercio]) map[m.comercio]={comercio:m.comercio, fecha:m.fecha, cat:cat};
-    if(String(m.fecha)>String(map[m.comercio].fecha)) map[m.comercio].fecha=m.fecha;
-    if(map[m.comercio].cat==="Sin clasificar" && cat!=="Sin clasificar") map[m.comercio].cat=cat;
+    if(!map[key]) map[key]={patron:key, ejemplo:m.comercio, fecha:m.fecha, cat:cat, n:0};
+    map[key].n++;
+    if(String(m.fecha)>String(map[key].fecha)){ map[key].fecha=m.fecha; map[key].ejemplo=m.comercio; }
+    if(map[key].cat==="Sin clasificar" && cat!=="Sin clasificar") map[key].cat=cat;
   });
   return Object.values(map).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
 }
 function openPick(m){ pickMerchant = pickMerchant===m?null:m; renderConfig(); }
-function assignCat(m,c){
-  merchantRules[String(m).toUpperCase()]=c;
-  movimientos.forEach(mo=>{ if(mo.comercio===m && (!mo.categoria||mo.categoria==="Sin clasificar")) mo.categoria=c; });
+function assignCatFromInput(cat){
+  const el=document.getElementById("patInput");
+  const patron=(el?el.value:"").trim().toUpperCase();
+  if(!patron) return;
+  applyRuleLocal(patron, cat);
   pickMerchant=null; recompute();
   renderConfig(); renderDonuts(curMedio,curDim); renderMovs(); renderTarjeta();
-  apiPost("classifyMerchant",{comercio:m, categoria:c});
+  apiPost("classifyMerchant",{patron:patron, categoria:cat});
+}
+function applyRuleLocal(patron, cat){
+  const P=String(patron).toUpperCase();
+  const ex=reglasList.find(r=>r.patron===P); if(ex) ex.categoria=cat; else reglasList.push({patron:P, categoria:cat});
+  movimientos.forEach(m=>{ if(String(m.comercio).toUpperCase().indexOf(P)>=0 && (!m.categoria||m.categoria==="Sin clasificar")) m.categoria=cat; });
 }
 function addCat(){
   const n=(document.getElementById("newCatName").value||"").trim();
@@ -1020,7 +1041,7 @@ function addCat(){
 function removeCat(c){
   if(categorias.length<=1) return;
   categorias=categorias.filter(x=>x!==c);
-  Object.keys(merchantRules).forEach(k=>{ if(merchantRules[k]===c) delete merchantRules[k]; });
+  reglasList=reglasList.filter(r=>r.categoria!==c);
   movimientos.forEach(mo=>{ if(mo.categoria===c) mo.categoria="Sin clasificar"; });
   recompute(); renderConfig(); renderCatFilter(); renderDonuts(curMedio,curDim); renderMovs();
   apiPost("deleteCategoria",{nombre:c});
