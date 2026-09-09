@@ -527,19 +527,17 @@ async function loadData(){
     applyData(json.data); renderAll(); showLoading(false);
   }catch(e){ showError(String(e && e.message ? e.message : e)); }
 }
-async function apiPost(action, payload){
+function apiPost(action, payload){
   showSaving(true);
-  try{
-    const res = await fetch(API_URL, {
-      method:"POST",
-      headers:{"Content-Type":"text/plain;charset=utf-8"},
-      body: JSON.stringify(Object.assign({action, token:TOKEN}, payload||{}))
-    });
-    const json = await res.json();
-    if(!json.ok) throw new Error(json.error||"error al guardar");
-    applyData(json.data); renderAll();
-  }catch(e){ alert("No se pudo guardar: " + (e && e.message ? e.message : e)); }
-  showSaving(false);
+  fetch(API_URL, {
+    method:"POST",
+    headers:{"Content-Type":"text/plain;charset=utf-8"},
+    body: JSON.stringify(Object.assign({action, token:TOKEN}, payload||{}))
+  })
+  .then(r=>r.json())
+  .then(json=>{ if(!json.ok) throw new Error(json.error||"error al guardar"); })
+  .catch(e=>{ alert("No se pudo guardar: " + (e && e.message ? e.message : e) + "\nRecargo para sincronizar."); loadData(); })
+  .finally(()=>showSaving(false));
 }
 function applyData(d){
   config.sueldo = Number(d.config.sueldo)||0;
@@ -837,11 +835,12 @@ function setBuyMedio(m){ buyMedio=m; renderWish(); }
 function confirmBuy(id){
   const monto=parseInt((document.getElementById("buyMonto").value||"").replace(/[^\d]/g,"")||"0",10);
   const w=wishlist.find(x=>String(x.id)===String(id)); if(!w) return;
-  buyingId=null; boughtOpen=true;
+  w.estado="Comprado"; w.medioPago=buyMedio; w.montoReal=monto; w.fechaCompra=new Date().toISOString().slice(0,10);
+  buyingId=null; boughtOpen=true; renderWish();
   apiPost("saveWishlist",{item:{id:w.id, producto:w.producto, precio:w.precio, prioridad:w.prioridad,
-    estado:"Comprado", medio:buyMedio, monto_real:monto, fecha_compra:new Date().toISOString().slice(0,10)}});
+    estado:"Comprado", medio:buyMedio, monto_real:monto, fecha_compra:w.fechaCompra}});
 }
-function removeWish(id){ apiPost("deleteWishlist",{id:id}); }
+function removeWish(id){ const i=wishlist.findIndex(x=>String(x.id)===String(id)); if(i>=0) wishlist.splice(i,1); renderWish(); apiPost("deleteWishlist",{id:id}); }
 function toggleBought(){ boughtOpen=!boughtOpen; renderBought(); }
 function renderBought(){
   const done = wishlist.filter(w=>w.estado==="Comprado");
@@ -869,7 +868,11 @@ function saveWish(){
   const nombre=(document.getElementById("newWishName").value||"").trim();
   const precio=parseInt((document.getElementById("newWishPrice").value||"").replace(/[^\d]/g,"")||"0",10);
   if(!nombre||!precio) return;
+  wishlist.unshift({id:"tmp-"+Date.now(), producto:nombre, precio:precio, prioridad:newPrio, estado:"Pendiente", medioPago:"debito", montoReal:0, fechaCompra:""});
   showAddWish=false;
+  document.getElementById("wishAddForm").style.display="none";
+  document.getElementById("wishAddBtn").style.display="block";
+  renderWish();
   apiPost("saveWishlist",{item:{producto:nombre, precio:precio, prioridad:newPrio, estado:"Pendiente"}});
 }
 
@@ -999,13 +1002,29 @@ function merchantList(){
   return Object.values(map).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
 }
 function openPick(m){ pickMerchant = pickMerchant===m?null:m; renderConfig(); }
-function assignCat(m,c){ pickMerchant=null; renderConfig(); apiPost("classifyMerchant",{comercio:m, categoria:c}); }
+function assignCat(m,c){
+  merchantRules[String(m).toUpperCase()]=c;
+  movimientos.forEach(mo=>{ if(mo.comercio===m && (!mo.categoria||mo.categoria==="Sin clasificar")) mo.categoria=c; });
+  pickMerchant=null; recompute();
+  renderConfig(); renderDonuts(curMedio,curDim); renderMovs(); renderTarjeta();
+  apiPost("classifyMerchant",{comercio:m, categoria:c});
+}
 function addCat(){
   const n=(document.getElementById("newCatName").value||"").trim();
   if(!n||categorias.includes(n)) return;
-  apiPost("addCategoria",{nombre:n, color:palette[categorias.length%palette.length]});
+  const col=palette[categorias.length%palette.length];
+  categorias.push(n); catColors[n]=col;
+  renderConfig(); renderCatFilter();
+  apiPost("addCategoria",{nombre:n, color:col});
 }
-function removeCat(c){ if(categorias.length<=1) return; apiPost("deleteCategoria",{nombre:c}); }
+function removeCat(c){
+  if(categorias.length<=1) return;
+  categorias=categorias.filter(x=>x!==c);
+  Object.keys(merchantRules).forEach(k=>{ if(merchantRules[k]===c) delete merchantRules[k]; });
+  movimientos.forEach(mo=>{ if(mo.categoria===c) mo.categoria="Sin clasificar"; });
+  recompute(); renderConfig(); renderCatFilter(); renderDonuts(curMedio,curDim); renderMovs();
+  apiPost("deleteCategoria",{nombre:c});
+}
 
 function fijoForm(x,i){
   const nm=(x.nombre||'').replace(/"/g,'&quot;');
@@ -1033,16 +1052,21 @@ function saveFijo(i){
   const diaRaw=(document.getElementById("fDia").value||"").replace(/[^\d]/g,"");
   const dia=diaRaw?parseInt(diaRaw,10):"";
   if(!nombre||!monto) return;
-  editFijo=null; renderConfig();
+  if(i==='new') fijos.push({id:"tmp-"+Date.now(), nombre:nombre, monto:monto, dia:dia, pagado:false});
+  else { const f=fijos.find(x=>String(x.id)===String(i)); if(f){ f.nombre=nombre; f.monto=monto; f.dia=dia; } }
+  editFijo=null; recompute();
+  renderConfig(); renderFijosMini(); renderHero(); renderWish();
   if(i==='new') apiPost("saveFijo",{fijo:{nombre:nombre, monto:monto, dia:dia}});
   else apiPost("saveFijo",{fijo:{id:i, nombre:nombre, monto:monto, dia:dia}});
 }
-function removeFijo(i){ editFijo=null; renderConfig(); apiPost("deleteFijo",{id:i}); }
+function removeFijo(i){ const idx=fijos.findIndex(x=>String(x.id)===String(i)); if(idx>=0) fijos.splice(idx,1); editFijo=null; recompute(); renderConfig(); renderFijosMini(); renderHero(); renderWish(); apiPost("deleteFijo",{id:i}); }
 
 function saveIngresos(){
   const s=parseInt((document.getElementById("iSueldo").value||"").replace(/[^\d]/g,"")||"0",10);
   const m=parseInt((document.getElementById("iMeta").value||"").replace(/[^\d]/g,"")||"0",10);
   const c=parseInt((document.getElementById("iCupo").value||"").replace(/[^\d]/g,"")||"0",10);
+  config.sueldo=s; config.metaAhorro=m; tarjeta.cupo=c;
+  recompute(); renderHero(); renderWish(); renderTarjeta(); renderConfig();
   apiPost("saveIngresos",{sueldo:s, meta_ahorro:m, cupo_tarjeta:c});
 }
 
