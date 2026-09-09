@@ -323,21 +323,20 @@
 
       <div class="grid">
         <div class="card">
-          <div class="k">↓ Ingreso del mes</div>
-          <div class="v" id="cIngreso">—</div>
+          <div class="k">💳 Saldo en cuenta</div>
+          <div class="v" id="cSaldo">—</div>
         </div>
         <div class="card">
-          <div class="k">✿ Ahorrado</div>
-          <div class="v"><span id="cAhorro">—</span> <small id="cAhorroMeta"></small></div>
-          <div class="savings-bar"><span id="ahBar"></span></div>
+          <div class="k">🔴 Deuda tarjeta</div>
+          <div class="v" id="cDeuda">—</div>
         </div>
         <div class="card">
-          <div class="k">● Gastado</div>
+          <div class="k">● Gastado este mes</div>
           <div class="v" id="cGastado">—</div>
         </div>
         <div class="card">
-          <div class="k">▦ Gastos fijos</div>
-          <div class="v" id="cFijos">—</div>
+          <div class="k">↓ Sueldo</div>
+          <div class="v" id="cSueldo">—</div>
         </div>
       </div>
 
@@ -475,7 +474,7 @@ const CLP = n => "$" + Math.round(Number(n)||0).toLocaleString("es-CL");
 const truthy = v => v===true||v==="TRUE"||v==="true"||v===1||v==="1"||v==="Sí"||v==="si";
 
 /* ===== ESTADO (se llena desde la API) ===== */
-let config = { sueldo:0, metaAhorro:0, ahorrado:0 };
+let config = { sueldo:0, saldoCuenta:0, metaAhorro:0, ahorrado:0 };
 let tarjeta = { cupo:0, ult4:"" };
 let categorias = [];
 let fijos = [];
@@ -541,6 +540,7 @@ function apiPost(action, payload){
 }
 function applyData(d){
   config.sueldo = Number(d.config.sueldo)||0;
+  config.saldoCuenta = Number(d.config.saldo_cuenta)||0;
   config.metaAhorro = Number(d.config.meta_ahorro)||0;
   config.ahorrado = Number(d.config.ahorrado)||0;
   tarjeta.cupo = Number(d.config.cupo_tarjeta)||0;
@@ -597,10 +597,10 @@ function recompute(){
   variableTotal = mm.filter(esGastoVariable).reduce((a,m)=>a+m.monto,0);
   fijosTotal = fijos.reduce((a,f)=>a+f.monto,0);
   gastadoTotal = variableTotal + fijosTotal;
-  discBudget = config.sueldo - config.metaAhorro - fijosTotal;
-  disponible = discBudget - variableTotal;
   pagoTarjeta = mm.filter(m=>m.tipo==="pago_tarjeta").reduce((a,m)=>a+m.monto,0);
   creditoUsado = mm.filter(m=>m.medio==="credito" && esGastoVariable(m)).reduce((a,m)=>a+m.monto,0);
+  discBudget = config.saldoCuenta;               // referencia del anillo
+  disponible = config.saldoCuenta - creditoUsado; // lo que tengo − lo que debo en la TC
 }
 function catOf(m){ return m.categoria || "Sin clasificar"; }
 function medioMatch(m, medio){
@@ -618,36 +618,34 @@ function catCounts(medio){
   movsMes().filter(m=>esGastoVariable(m)&&medioMatch(m,medio)).forEach(m=>{const c=catOf(m); t[c]=(t[c]||0)+1;});
   return t;
 }
-function semaforoOf(disp, budget){
-  const r = budget>0 ? disp/budget : (disp>=0?1:-1);
-  if (disp < 0 || r < 0.10) return {k:"bad", txt:"Estás pasada del límite", color:"var(--bad)", bg:"var(--bad-bg)"};
-  if (r < 0.30) return {k:"warn", txt:"Cerca del límite", color:"#9A6E28", bg:"var(--warn-bg)"};
-  return {k:"ok", txt:"Vas bien", color:"var(--ok)", bg:"var(--ok-bg)"};
+function semaforoOf(disp){
+  if (disp < 0) return {txt:"Estás gastando de la tarjeta", color:"var(--bad)", bg:"var(--bad-bg)"};
+  const umbral = config.sueldo>0 ? config.sueldo*0.1 : 100000;
+  if (disp < umbral) return {txt:"Te queda poco", color:"#9A6E28", bg:"var(--warn-bg)"};
+  return {txt:"Vas bien", color:"var(--ok)", bg:"var(--ok-bg)"};
 }
 
 /* ===== HERO ===== */
 function renderHero(){
+  const deuda = creditoUsado;
   document.getElementById("dispAmount").textContent = CLP(disponible);
-  const sem = semaforoOf(disponible, discBudget);
+  const sem = semaforoOf(disponible);
   const semEl = document.getElementById("dispSem");
   semEl.style.background = sem.bg; semEl.style.color = sem.color;
   semEl.innerHTML = `<span class="dot" style="background:${sem.color}"></span>${sem.txt}`;
-  const pct = discBudget>0 ? Math.max(0, Math.min(1, disponible/discBudget)) : 0;
+  const pct = config.saldoCuenta>0 ? Math.max(0, Math.min(1, disponible/config.saldoCuenta)) : (disponible>=0?1:0);
   document.getElementById("dispSub").innerHTML =
-    `Llevas gastado <b>${CLP(variableTotal)}</b><br>de tus ${CLP(discBudget)} para gustos`;
+    `En tu cuenta <b>${CLP(config.saldoCuenta)}</b><br>debes en tarjeta ${CLP(deuda)}`;
   const R=32, C=2*Math.PI*R, off=C*(1-pct);
   document.getElementById("dispRing").innerHTML =
     `<circle cx="40" cy="40" r="${R}" fill="none" stroke="var(--line)" stroke-width="8"/>
      <circle cx="40" cy="40" r="${R}" fill="none" stroke="${sem.color}" stroke-width="8"
        stroke-linecap="round" stroke-dasharray="${C}" stroke-dashoffset="${off}" transform="rotate(-90 40 40)"/>`;
   document.getElementById("dispPct").textContent = Math.round(pct*100)+"%";
-
-  document.getElementById("cIngreso").textContent = CLP(config.sueldo);
-  document.getElementById("cAhorro").textContent = CLP(config.ahorrado);
-  document.getElementById("cAhorroMeta").textContent = "/ "+CLP(config.metaAhorro);
-  document.getElementById("ahBar").style.width = (config.metaAhorro>0?Math.min(100,(config.ahorrado/config.metaAhorro)*100):0)+"%";
-  document.getElementById("cGastado").textContent = CLP(gastadoTotal);
-  document.getElementById("cFijos").textContent = CLP(fijosTotal);
+  document.getElementById("cSaldo").textContent = CLP(config.saldoCuenta);
+  document.getElementById("cDeuda").textContent = CLP(deuda);
+  document.getElementById("cGastado").textContent = CLP(variableTotal);
+  document.getElementById("cSueldo").textContent = CLP(config.sueldo);
 }
 
 /* ===== DONUT ===== */
@@ -898,8 +896,8 @@ function renderConfig(){
       <div class="cfg-head"><button class="cfg-back" onclick="go('inicio')">‹</button><h2>Configuraciones</h2></div>
       <div class="cfg-menu">
         <button class="cfg-row" onclick="openConfig('ingresos')">
-          <span class="cic">💰</span><span class="mid"><span class="nm">Ingresos y meta de ahorro</span>
-          <span class="sb">Sueldo ${CLP(config.sueldo)} · meta ${CLP(config.metaAhorro)}</span></span><span class="arw">›</span></button>
+          <span class="cic">💰</span><span class="mid"><span class="nm">Saldo, sueldo y tarjeta</span>
+          <span class="sb">Saldo ${CLP(config.saldoCuenta)} · deuda TC ${CLP(creditoUsado)}</span></span><span class="arw">›</span></button>
         <button class="cfg-row" onclick="openConfig('fijos')">
           <span class="cic">▦</span><span class="mid"><span class="nm">Gastos fijos</span>
           <span class="sb">${fijos.length} gastos · ${CLP(fijosTotal)}</span></span><span class="arw">›</span></button>
@@ -916,25 +914,25 @@ function renderConfig(){
 
   if(configView==="ingresos"){
     body.innerHTML=`
-      <div class="cfg-head"><button class="cfg-back" onclick="cfgBack()">‹</button><h2>Ingresos y meta</h2></div>
-      <p class="muted" style="margin-bottom:14px">Esto alimenta todo el cálculo: tu disponible, los semáforos y la wishlist.</p>
+      <div class="cfg-head"><button class="cfg-back" onclick="cfgBack()">‹</button><h2>Saldo y tarjeta</h2></div>
+      <p class="muted" style="margin-bottom:14px">Tu "Disponible" = lo que tienes en la cuenta − lo que debes en la tarjeta.</p>
       <div class="fijo-edit">
-        <div class="wform-lbl">Sueldo mensual</div>
+        <div class="wform-lbl">Saldo en tu cuenta corriente</div>
+        <input class="winput" id="iSaldo" type="text" inputmode="numeric" value="${config.saldoCuenta}" placeholder="0">
+        <div class="wform-lbl" style="color:var(--ink-faint);font-weight:400;margin-top:6px">Míralo en tu banco y actualízalo cuando quieras. Es lo que de verdad tienes.</div>
+        <div class="wform-lbl">Sueldo mensual (referencia)</div>
         <input class="winput" id="iSueldo" type="text" inputmode="numeric" value="${config.sueldo}" placeholder="0">
-        <div class="wform-lbl">Meta de ahorro del mes</div>
-        <input class="winput" id="iMeta" type="text" inputmode="numeric" value="${config.metaAhorro}" placeholder="0">
-        <div class="wform-lbl">Cupo de la tarjeta de crédito</div>
+        <div class="wform-lbl">Cupo total de la tarjeta</div>
         <input class="winput" id="iCupo" type="text" inputmode="numeric" value="${tarjeta.cupo}" placeholder="0">
         <div class="wactions"><button class="wbtn primary" onclick="saveIngresos()">Guardar</button></div>
       </div>
       <div class="panel" style="margin-top:14px">
-        <div style="font-size:12px;color:var(--ink-soft)">Este mes (${nombreMes(mesActivo)}):</div>
-        <div style="display:flex;justify-content:space-between;margin-top:10px;font-size:13px"><span>Sueldo</span><b>${CLP(config.sueldo)}</b></div>
-        <div style="display:flex;justify-content:space-between;margin-top:6px;font-size:13px;color:var(--ink-soft)"><span>− Meta de ahorro</span><span>${CLP(config.metaAhorro)}</span></div>
-        <div style="display:flex;justify-content:space-between;margin-top:6px;font-size:13px;color:var(--ink-soft)"><span>− Gastos fijos</span><span>${CLP(fijosTotal)}</span></div>
-        <div style="display:flex;justify-content:space-between;margin-top:6px;font-size:13px;color:var(--ink-soft)"><span>− Gastado variable</span><span>${CLP(variableTotal)}</span></div>
+        <div style="font-size:12px;color:var(--ink-soft)">Tu disponible real ahora:</div>
+        <div style="display:flex;justify-content:space-between;margin-top:10px;font-size:13px"><span>Saldo en cuenta</span><b>${CLP(config.saldoCuenta)}</b></div>
+        <div style="display:flex;justify-content:space-between;margin-top:6px;font-size:13px;color:var(--ink-soft)"><span>− Deuda tarjeta (uso ${nombreMes(mesActivo)})</span><span>${CLP(creditoUsado)}</span></div>
         <div style="display:flex;justify-content:space-between;margin-top:10px;padding-top:10px;border-top:1px solid var(--line);font-size:14px"><span><b>Disponible para gastar</b></span><b style="color:var(--rose-deep)">${CLP(disponible)}</b></div>
-      </div>`;
+      </div>
+      <p class="muted" style="margin-top:12px">Tu ahorro y tus cuentas fijas ya salieron de tu cuenta (por eso bajan tu saldo). No se restan aparte, para no contarlos dos veces.</p>`;
     return;
   }
 
@@ -1083,12 +1081,12 @@ function saveFijo(i){
 function removeFijo(i){ const idx=fijos.findIndex(x=>String(x.id)===String(i)); if(idx>=0) fijos.splice(idx,1); editFijo=null; recompute(); renderConfig(); renderFijosMini(); renderHero(); renderWish(); apiPost("deleteFijo",{id:i}); }
 
 function saveIngresos(){
+  const saldo=parseInt((document.getElementById("iSaldo").value||"").replace(/[^\d]/g,"")||"0",10);
   const s=parseInt((document.getElementById("iSueldo").value||"").replace(/[^\d]/g,"")||"0",10);
-  const m=parseInt((document.getElementById("iMeta").value||"").replace(/[^\d]/g,"")||"0",10);
   const c=parseInt((document.getElementById("iCupo").value||"").replace(/[^\d]/g,"")||"0",10);
-  config.sueldo=s; config.metaAhorro=m; tarjeta.cupo=c;
+  config.saldoCuenta=saldo; config.sueldo=s; tarjeta.cupo=c;
   recompute(); renderHero(); renderWish(); renderTarjeta(); renderConfig();
-  apiPost("saveIngresos",{sueldo:s, meta_ahorro:m, cupo_tarjeta:c});
+  apiPost("saveIngresos",{saldo_cuenta:saldo, sueldo:s, cupo_tarjeta:c});
 }
 
 /* ===== NAV ===== */
