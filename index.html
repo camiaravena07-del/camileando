@@ -403,7 +403,7 @@
           <div><div class="brand">Banco de Chile</div><div class="num">•••• •••• •••• 0513</div></div>
           <div style="font-size:22px">✦</div>
         </div>
-        <div class="biglbl">Compras del mes por pagar</div>
+        <div class="biglbl">Deuda de la tarjeta (cupo utilizado)</div>
         <div class="big" id="ccPorPagar">—</div>
         <div class="cc-bar"><span id="ccBar"></span></div>
         <div class="row"><span id="ccUsadoTxt">—</span><span id="ccCupoTxt">—</span></div>
@@ -411,7 +411,7 @@
 
       <div class="note">
         <span class="ic">✓</span>
-        <div class="tx"><b>Sin doble conteo.</b> Este mes pagaste <b id="ccPagado">—</b> de tu tarjeta. Ese pago <b>no se cuenta como gasto</b>, porque cada compra ya se registró cuando la hiciste.</div>
+        <div class="tx"><b>La deuda la pones tú.</b> Mira el "cupo utilizado" en tu banco y actualízalo en ⚙ → Saldo y tarjeta. La lista de abajo son tus compras con crédito del mes, para que veas en qué se fue.</div>
       </div>
 
       <div class="section-h"><h2>Compras con crédito</h2></div>
@@ -474,7 +474,7 @@ const CLP = n => "$" + Math.round(Number(n)||0).toLocaleString("es-CL");
 const truthy = v => v===true||v==="TRUE"||v==="true"||v===1||v==="1"||v==="Sí"||v==="si";
 
 /* ===== ESTADO (se llena desde la API) ===== */
-let config = { sueldo:0, saldoCuenta:0, metaAhorro:0, ahorrado:0 };
+let config = { sueldo:0, saldoCuenta:0, deudaTarjeta:0, metaAhorro:0, ahorrado:0 };
 let tarjeta = { cupo:0, ult4:"" };
 let categorias = [];
 let fijos = [];
@@ -541,6 +541,7 @@ function apiPost(action, payload){
 function applyData(d){
   config.sueldo = Number(d.config.sueldo)||0;
   config.saldoCuenta = Number(d.config.saldo_cuenta)||0;
+  config.deudaTarjeta = Number(d.config.deuda_tarjeta)||0;
   config.metaAhorro = Number(d.config.meta_ahorro)||0;
   config.ahorrado = Number(d.config.ahorrado)||0;
   tarjeta.cupo = Number(d.config.cupo_tarjeta)||0;
@@ -599,8 +600,8 @@ function recompute(){
   gastadoTotal = variableTotal + fijosTotal;
   pagoTarjeta = mm.filter(m=>m.tipo==="pago_tarjeta").reduce((a,m)=>a+m.monto,0);
   creditoUsado = mm.filter(m=>m.medio==="credito" && esGastoVariable(m)).reduce((a,m)=>a+m.monto,0);
-  discBudget = config.saldoCuenta;               // referencia del anillo
-  disponible = config.saldoCuenta - creditoUsado; // lo que tengo − lo que debo en la TC
+  discBudget = config.saldoCuenta;                    // referencia del anillo
+  disponible = config.saldoCuenta - config.deudaTarjeta; // lo que tengo − lo que debo en la TC
 }
 function catOf(m){ return m.categoria || "Sin clasificar"; }
 function medioMatch(m, medio){
@@ -627,7 +628,7 @@ function semaforoOf(disp){
 
 /* ===== HERO ===== */
 function renderHero(){
-  const deuda = creditoUsado;
+  const deuda = config.deudaTarjeta;
   document.getElementById("dispAmount").textContent = CLP(disponible);
   const sem = semaforoOf(disponible);
   const semEl = document.getElementById("dispSem");
@@ -769,11 +770,10 @@ function renderMovs(){
 
 /* ===== TARJETA ===== */
 function renderTarjeta(){
-  document.getElementById("ccPorPagar").textContent = CLP(creditoUsado);
-  document.getElementById("ccBar").style.width = (tarjeta.cupo>0?Math.min(100,(creditoUsado/tarjeta.cupo)*100):0)+"%";
-  document.getElementById("ccUsadoTxt").textContent = "Usado "+CLP(creditoUsado);
+  document.getElementById("ccPorPagar").textContent = CLP(config.deudaTarjeta);
+  document.getElementById("ccBar").style.width = (tarjeta.cupo>0?Math.min(100,(config.deudaTarjeta/tarjeta.cupo)*100):0)+"%";
+  document.getElementById("ccUsadoTxt").textContent = "Usado "+CLP(config.deudaTarjeta);
   document.getElementById("ccCupoTxt").textContent = "Cupo "+CLP(tarjeta.cupo);
-  document.getElementById("ccPagado").textContent = CLP(pagoTarjeta);
   const cm = movsMes().filter(m=>m.medio==="credito" && esGastoVariable(m)).sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha)));
   document.getElementById("ccMovs").innerHTML = cm.map(m=>{
     const c=catOf(m), col=colorFor(c);
@@ -897,7 +897,7 @@ function renderConfig(){
       <div class="cfg-menu">
         <button class="cfg-row" onclick="openConfig('ingresos')">
           <span class="cic">💰</span><span class="mid"><span class="nm">Saldo, sueldo y tarjeta</span>
-          <span class="sb">Saldo ${CLP(config.saldoCuenta)} · deuda TC ${CLP(creditoUsado)}</span></span><span class="arw">›</span></button>
+          <span class="sb">Saldo ${CLP(config.saldoCuenta)} · deuda TC ${CLP(config.deudaTarjeta)}</span></span><span class="arw">›</span></button>
         <button class="cfg-row" onclick="openConfig('fijos')">
           <span class="cic">▦</span><span class="mid"><span class="nm">Gastos fijos</span>
           <span class="sb">${fijos.length} gastos · ${CLP(fijosTotal)}</span></span><span class="arw">›</span></button>
@@ -919,7 +919,10 @@ function renderConfig(){
       <div class="fijo-edit">
         <div class="wform-lbl">Saldo en tu cuenta corriente</div>
         <input class="winput" id="iSaldo" type="text" inputmode="numeric" value="${config.saldoCuenta}" placeholder="0">
-        <div class="wform-lbl" style="color:var(--ink-faint);font-weight:400;margin-top:6px">Míralo en tu banco y actualízalo cuando quieras. Es lo que de verdad tienes.</div>
+        <div class="wform-lbl" style="color:var(--ink-faint);font-weight:400;margin-top:6px">Míralo en tu banco y actualízalo cuando quieras.</div>
+        <div class="wform-lbl">Deuda de la tarjeta (cupo utilizado)</div>
+        <input class="winput" id="iDeuda" type="text" inputmode="numeric" value="${config.deudaTarjeta}" placeholder="0">
+        <div class="wform-lbl" style="color:var(--ink-faint);font-weight:400;margin-top:6px">El "cupo utilizado" que muestra tu banco.</div>
         <div class="wform-lbl">Sueldo mensual (referencia)</div>
         <input class="winput" id="iSueldo" type="text" inputmode="numeric" value="${config.sueldo}" placeholder="0">
         <div class="wform-lbl">Cupo total de la tarjeta</div>
@@ -929,7 +932,7 @@ function renderConfig(){
       <div class="panel" style="margin-top:14px">
         <div style="font-size:12px;color:var(--ink-soft)">Tu disponible real ahora:</div>
         <div style="display:flex;justify-content:space-between;margin-top:10px;font-size:13px"><span>Saldo en cuenta</span><b>${CLP(config.saldoCuenta)}</b></div>
-        <div style="display:flex;justify-content:space-between;margin-top:6px;font-size:13px;color:var(--ink-soft)"><span>− Deuda tarjeta (uso ${nombreMes(mesActivo)})</span><span>${CLP(creditoUsado)}</span></div>
+        <div style="display:flex;justify-content:space-between;margin-top:6px;font-size:13px;color:var(--ink-soft)"><span>− Deuda tarjeta</span><span>${CLP(config.deudaTarjeta)}</span></div>
         <div style="display:flex;justify-content:space-between;margin-top:10px;padding-top:10px;border-top:1px solid var(--line);font-size:14px"><span><b>Disponible para gastar</b></span><b style="color:var(--rose-deep)">${CLP(disponible)}</b></div>
       </div>
       <p class="muted" style="margin-top:12px">Tu ahorro y tus cuentas fijas ya salieron de tu cuenta (por eso bajan tu saldo). No se restan aparte, para no contarlos dos veces.</p>`;
@@ -1082,11 +1085,12 @@ function removeFijo(i){ const idx=fijos.findIndex(x=>String(x.id)===String(i)); 
 
 function saveIngresos(){
   const saldo=parseInt((document.getElementById("iSaldo").value||"").replace(/[^\d]/g,"")||"0",10);
+  const deuda=parseInt((document.getElementById("iDeuda").value||"").replace(/[^\d]/g,"")||"0",10);
   const s=parseInt((document.getElementById("iSueldo").value||"").replace(/[^\d]/g,"")||"0",10);
   const c=parseInt((document.getElementById("iCupo").value||"").replace(/[^\d]/g,"")||"0",10);
-  config.saldoCuenta=saldo; config.sueldo=s; tarjeta.cupo=c;
+  config.saldoCuenta=saldo; config.deudaTarjeta=deuda; config.sueldo=s; tarjeta.cupo=c;
   recompute(); renderHero(); renderWish(); renderTarjeta(); renderConfig();
-  apiPost("saveIngresos",{saldo_cuenta:saldo, sueldo:s, cupo_tarjeta:c});
+  apiPost("saveIngresos",{saldo_cuenta:saldo, deuda_tarjeta:deuda, sueldo:s, cupo_tarjeta:c});
 }
 
 /* ===== NAV ===== */
