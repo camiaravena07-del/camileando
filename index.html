@@ -330,20 +330,20 @@
 
       <div class="grid">
         <div class="card">
-          <div class="k">💳 Saldo en cuenta</div>
-          <div class="v" id="cSaldo">—</div>
+          <div class="k">↓ Ingresos del mes</div>
+          <div class="v" id="cIngresos">—</div>
         </div>
         <div class="card">
-          <div class="k">🔴 Deuda tarjeta</div>
-          <div class="v" id="cDeuda">—</div>
+          <div class="k">▦ Gastos fijos</div>
+          <div class="v" id="cFijos">—</div>
         </div>
         <div class="card">
-          <div class="k">● Gastado este mes</div>
-          <div class="v" id="cGastado">—</div>
+          <div class="k">💳 Gastos débito</div>
+          <div class="v" id="cDebito">—</div>
         </div>
         <div class="card">
-          <div class="k">↓ Sueldo</div>
-          <div class="v" id="cSueldo">—</div>
+          <div class="k">◉ Gastos crédito</div>
+          <div class="v" id="cCredito">—</div>
         </div>
       </div>
 
@@ -369,7 +369,6 @@
       <div class="section-h"><h2>Gastos fijos</h2><a onclick="openConfig('fijos')">Administrar</a></div>
       <div class="panel" id="fijosMini"></div>
 
-      <div class="mock-flag">Mockup · datos de ejemplo basados en tu junio real</div>
     </section>
 
     <!-- ============ GASTOS ============ -->
@@ -495,6 +494,8 @@ let configView="menu", pickMerchant=null, editFijo=null;
 let buyingId=null, buyMedio="debito", newPrio="media", showAddWish=false, boughtOpen=false;
 
 let variableTotal=0,fijosTotal=0,gastadoTotal=0,discBudget=0,disponible=0,pagoTarjeta=0,creditoUsado=0;
+let ingresosExtraTotal=0,ingresosTotal=0,debitoTotal=0,creditoTotal=0;
+let fixedMatchedIds=new Set();
 
 const palette=["#7BA6A1","#B98AAD","#A0894E","#9E7BB0","#C58A6B","#6E93B0","#B36B6B"];
 const catColors = {
@@ -560,7 +561,7 @@ function applyData(d){
 
   reglasList = (d.reglas||[]).map(r=>({patron:String(r.patron||"").toUpperCase(), categoria:r.categoria}));
 
-  fijos = (d.fijos||[]).map(f=>({ id:f.id, nombre:f.nombre, monto:Number(f.monto)||0, dia:f.dia, pagadoMes:String(f.pagado_mes||"") }));
+  fijos = (d.fijos||[]).map(f=>({ id:f.id, nombre:f.nombre, monto:Number(f.monto)||0, dia:f.dia, activo:truthy(f.activo), pagadoMes:String(f.pagado_mes||""), patron:String(f.patron||"").toUpperCase(), montoReal:Number(f.monto_real)||0 }));
 
   movimientos = (d.movimientos||[]).map(m=>({
     id:m.id, fecha:String(m.fecha||""), hora:m.hora||"", comercio:m.comercio||"", monto:Number(m.monto)||0,
@@ -601,16 +602,49 @@ function shiftMonth(dir){
 }
 
 /* ===== CÁLCULOS ===== */
-const esGastoVariable = m => m.tipo === "gasto";
+// PLAN MENSUAL: sueldo/ingresos - fijos comprometidos - débito - crédito.
+// Un movimiento que corresponde a un fijo REEMPLAZA el presupuesto del fijo, no se suma dos veces.
+const esSalidaReal = m => m.tipo === "gasto" || m.tipo === "transferencia_salida";
+const esExcluidoPresupuesto = m => ["Transferencia propia","Ahorro","TC"].includes(catOf(m)) || ["pago_tarjeta","ahorro","ahorro_retiro","ingreso","reembolso"].includes(m.tipo);
+function patronMatch(texto, patron){
+  const p=String(patron||"").trim().toUpperCase();
+  return !!p && String(texto||"").toUpperCase().includes(p);
+}
+function movimientosDeFijo(f, mm){
+  if(!f.patron) return [];
+  return mm.filter(m=>esSalidaReal(m) && patronMatch(m.comercio,f.patron));
+}
+function esGastoVariable(m){
+  return esSalidaReal(m) && !esExcluidoPresupuesto(m) && !fixedMatchedIds.has(String(m.id));
+}
 function recompute(){
   const mm = movsMes();
-  variableTotal = mm.filter(esGastoVariable).reduce((a,m)=>a+m.monto,0);
-  fijosTotal = fijos.reduce((a,f)=>a+f.monto,0);
-  gastadoTotal = variableTotal;
+  fixedMatchedIds = new Set();
+  fijosTotal = 0;
+
+  fijos.filter(f=>f.activo!==false).forEach(f=>{
+    const matches=movimientosDeFijo(f,mm);
+    matches.forEach(m=>fixedMatchedIds.add(String(m.id)));
+    const real=matches.reduce((a,m)=>a+m.monto,0);
+    // Si encontramos el pago real, usamos el real. Si no, reservamos el presupuesto.
+    f._realMes=real;
+    f._pagadoAuto=real>0;
+    fijosTotal += real>0 ? real : f.monto;
+  });
+
+  const vars=mm.filter(esGastoVariable);
+  debitoTotal = vars.filter(m=>m.medio!=="credito").reduce((a,m)=>a+m.monto,0);
+  creditoTotal = vars.filter(m=>m.medio==="credito").reduce((a,m)=>a+m.monto,0);
+  variableTotal = debitoTotal + creditoTotal;
+
+  ingresosExtraTotal = mm.filter(m=>m.tipo==="ingreso").reduce((a,m)=>a+m.monto,0);
+  ingresosTotal = config.sueldo + ingresosExtraTotal;
+
+  gastadoTotal = fijosTotal + variableTotal;
+  disponible = ingresosTotal - gastadoTotal;
+  discBudget = ingresosTotal;
   pagoTarjeta = mm.filter(m=>m.tipo==="pago_tarjeta").reduce((a,m)=>a+m.monto,0);
-  creditoUsado = mm.filter(m=>m.medio==="credito" && esGastoVariable(m)).reduce((a,m)=>a+m.monto,0);
-  discBudget = config.saldoCuenta;                    // referencia del anillo
-  disponible = config.saldoCuenta - config.deudaTarjeta; // lo que tengo − lo que debo en la TC
+  creditoUsado = creditoTotal;
 }
 function catOf(m){ return m.categoria || "Sin clasificar"; }
 function medioMatch(m, medio){
@@ -629,7 +663,7 @@ function catCounts(medio){
   return t;
 }
 function semaforoOf(disp){
-  if (disp < 0) return {txt:"Estás gastando de la tarjeta", color:"var(--bad)", bg:"var(--bad-bg)"};
+  if (disp < 0) return {txt:"Te pasaste del presupuesto", color:"var(--bad)", bg:"var(--bad-bg)"};
   const umbral = config.sueldo>0 ? config.sueldo*0.1 : 100000;
   if (disp < umbral) return {txt:"Te queda poco", color:"#9A6E28", bg:"var(--warn-bg)"};
   return {txt:"Vas bien", color:"var(--ok)", bg:"var(--ok-bg)"};
@@ -637,25 +671,24 @@ function semaforoOf(disp){
 
 /* ===== HERO ===== */
 function renderHero(){
-  const deuda = config.deudaTarjeta;
   document.getElementById("dispAmount").textContent = CLP(disponible);
   const sem = semaforoOf(disponible);
   const semEl = document.getElementById("dispSem");
   semEl.style.background = sem.bg; semEl.style.color = sem.color;
   semEl.innerHTML = `<span class="dot" style="background:${sem.color}"></span>${sem.txt}`;
-  const pct = config.saldoCuenta>0 ? Math.max(0, Math.min(1, disponible/config.saldoCuenta)) : (disponible>=0?1:0);
+  const pct = ingresosTotal>0 ? Math.max(0,Math.min(1,disponible/ingresosTotal)) : 0;
   document.getElementById("dispSub").innerHTML =
-    `En tu cuenta <b>${CLP(config.saldoCuenta)}</b><br>debes en tarjeta ${CLP(deuda)}`;
+    `Ingresos <b>${CLP(ingresosTotal)}</b><br>total gastos ${CLP(gastadoTotal)}`;
   const R=32, C=2*Math.PI*R, off=C*(1-pct);
   document.getElementById("dispRing").innerHTML =
     `<circle cx="40" cy="40" r="${R}" fill="none" stroke="var(--line)" stroke-width="8"/>
      <circle cx="40" cy="40" r="${R}" fill="none" stroke="${sem.color}" stroke-width="8"
        stroke-linecap="round" stroke-dasharray="${C}" stroke-dashoffset="${off}" transform="rotate(-90 40 40)"/>`;
   document.getElementById("dispPct").textContent = Math.round(pct*100)+"%";
-  document.getElementById("cSaldo").textContent = CLP(config.saldoCuenta);
-  document.getElementById("cDeuda").textContent = CLP(deuda);
-  document.getElementById("cGastado").textContent = CLP(variableTotal);
-  document.getElementById("cSueldo").textContent = CLP(config.sueldo);
+  document.getElementById("cIngresos").textContent = CLP(ingresosTotal);
+  document.getElementById("cFijos").textContent = CLP(fijosTotal);
+  document.getElementById("cDebito").textContent = CLP(debitoTotal);
+  document.getElementById("cCredito").textContent = CLP(creditoTotal);
 }
 
 /* ===== DONUT ===== */
@@ -893,8 +926,8 @@ function saveWish(){
 function renderFijosMini(){
   document.getElementById("fijosMini").innerHTML =
     (fijos.slice(0,4).map(x=>`<div class="fijo-row"><div class="mid"><div class="nm">${x.nombre}</div>
-      <div class="dia">${x.dia?'día '+x.dia:''} · ${x.pagadoMes===mesActivo?'pagado':'pendiente'}</div></div>
-      <div class="am">${CLP(x.monto)}</div></div>`).join("") || `<p class="muted">Aún no tienes gastos fijos. Agrégalos en Configuraciones.</p>`) +
+      <div class="dia">${x._pagadoAuto?'✓ pago detectado':(x.pagadoMes===mesActivo?'✓ pagado':'pendiente')}${x.patron?' · '+x.patron:''}</div></div>
+      <div class="am">${CLP(x._realMes>0?x._realMes:x.monto)}</div></div>`).join("") || `<p class="muted">Aún no tienes gastos fijos. Agrégalos en Configuraciones.</p>`) +
       `<div style="text-align:center;padding-top:12px"><a style="color:var(--rose-deep);font-size:12.5px;font-weight:600;cursor:pointer" onclick="openConfig('fijos')">Administrar gastos fijos${fijos.length?' ('+fijos.length+')':''}</a></div>`;
 }
 function togglePagado(id){
@@ -917,7 +950,7 @@ function renderConfig(){
       <div class="cfg-head"><button class="cfg-back" onclick="go('inicio')">‹</button><h2>Configuraciones</h2></div>
       <div class="cfg-menu">
         <button class="cfg-row" onclick="openConfig('ingresos')">
-          <span class="cic">💰</span><span class="mid"><span class="nm">Saldo, sueldo y tarjeta</span>
+          <span class="cic">💰</span><span class="mid"><span class="nm">Presupuesto e información bancaria</span>
           <span class="sb">Saldo ${CLP(config.saldoCuenta)} · deuda TC ${CLP(config.deudaTarjeta)}</span></span><span class="arw">›</span></button>
         <button class="cfg-row" onclick="openConfig('fijos')">
           <span class="cic">▦</span><span class="mid"><span class="nm">Gastos fijos</span>
@@ -936,7 +969,7 @@ function renderConfig(){
   if(configView==="ingresos"){
     body.innerHTML=`
       <div class="cfg-head"><button class="cfg-back" onclick="cfgBack()">‹</button><h2>Saldo y tarjeta</h2></div>
-      <p class="muted" style="margin-bottom:14px">Tu "Disponible" = lo que tienes en la cuenta − lo que debes en la tarjeta.</p>
+      <p class="muted" style="margin-bottom:14px">Tu Disponible sigue la lógica de PLAN MENSUAL: ingresos − gastos fijos − débito − crédito. Saldo y deuda bancaria quedan solo como referencia.</p>
       <div class="fijo-edit">
         <div class="wform-lbl">Saldo en tu cuenta corriente</div>
         <input class="winput" id="iSaldo" type="text" inputmode="numeric" value="${config.saldoCuenta}" placeholder="0">
@@ -951,28 +984,30 @@ function renderConfig(){
         <div class="wactions"><button class="wbtn primary" onclick="saveIngresos()">Guardar</button></div>
       </div>
       <div class="panel" style="margin-top:14px">
-        <div style="font-size:12px;color:var(--ink-soft)">Tu disponible real ahora:</div>
-        <div style="display:flex;justify-content:space-between;margin-top:10px;font-size:13px"><span>Saldo en cuenta</span><b>${CLP(config.saldoCuenta)}</b></div>
-        <div style="display:flex;justify-content:space-between;margin-top:6px;font-size:13px;color:var(--ink-soft)"><span>− Deuda tarjeta</span><span>${CLP(config.deudaTarjeta)}</span></div>
+        <div style="font-size:12px;color:var(--ink-soft)">Tu presupuesto de ${nombreMes(mesActivo)}:</div>
+        <div style="display:flex;justify-content:space-between;margin-top:10px;font-size:13px"><span>Ingresos</span><b>${CLP(ingresosTotal)}</b></div>
+        <div style="display:flex;justify-content:space-between;margin-top:6px;font-size:13px;color:var(--ink-soft)"><span>− Fijos</span><span>${CLP(fijosTotal)}</span></div>
+        <div style="display:flex;justify-content:space-between;margin-top:6px;font-size:13px;color:var(--ink-soft)"><span>− Débito</span><span>${CLP(debitoTotal)}</span></div>
+        <div style="display:flex;justify-content:space-between;margin-top:6px;font-size:13px;color:var(--ink-soft)"><span>− Crédito</span><span>${CLP(creditoTotal)}</span></div>
         <div style="display:flex;justify-content:space-between;margin-top:10px;padding-top:10px;border-top:1px solid var(--line);font-size:14px"><span><b>Disponible para gastar</b></span><b style="color:var(--rose-deep)">${CLP(disponible)}</b></div>
       </div>
-      <p class="muted" style="margin-top:12px">Tu ahorro y tus cuentas fijas ya salieron de tu cuenta (por eso bajan tu saldo). No se restan aparte, para no contarlos dos veces.</p>`;
+      <p class="muted" style="margin-top:12px">Los pagos de tarjeta no se cuentan de nuevo. Si un gasto fijo tiene un patrón de comercio y encontramos su pago real, reemplaza el monto presupuestado automáticamente.</p>`;
     return;
   }
 
   if(configView==="fijos"){
     body.innerHTML=`
       <div class="cfg-head"><button class="cfg-back" onclick="cfgBack()">‹</button><h2>Cuentas del mes</h2></div>
-      <p class="muted" style="margin-bottom:14px">Tu checklist de cuentas fijas. Marca ✓ la que ya pagaste. Es solo un recordatorio — no afecta tu disponible (eso lo maneja tu saldo).</p>
+      <p class="muted" style="margin-bottom:14px">Estos montos se reservan desde el inicio del mes. Si agregas una palabra clave, cuando aparezca el pago real reemplazará el presupuesto y no se contará dos veces.</p>
       ${fijos.map(x=> editFijo===x.id ? fijoForm(x,x.id) : `
         <div class="fijo-card" onclick="openEditFijo('${x.id}')">
           <div style="flex:1"><div class="nm">${x.nombre}</div>
-            <div class="dia">${x.dia?'~ día '+x.dia:'sin fecha'} · toca para editar</div></div>
-          <div class="am">${CLP(x.monto)}</div>
-          <div class="check ${x.pagadoMes===mesActivo?'done':''}" onclick="event.stopPropagation();togglePagado('${x.id}')">${x.pagadoMes===mesActivo?'✓':''}</div>
+            <div class="dia">${x._pagadoAuto?'✓ detectado automáticamente':(x.pagadoMes===mesActivo?'✓ marcado pagado':(x.patron?'esperando '+x.patron:'sin patrón automático'))} · toca para editar</div></div>
+          <div class="am">${CLP(x._realMes>0?x._realMes:x.monto)}</div>
+          <div class="check ${(x._pagadoAuto||x.pagadoMes===mesActivo)?'done':''}" onclick="event.stopPropagation();togglePagado('${x.id}')">${(x._pagadoAuto||x.pagadoMes===mesActivo)?'✓':''}</div>
         </div>`).join("")}
       ${editFijo==='new' ? fijoForm({}, 'new') : `<button class="addbtn" onclick="openEditFijo('new')">+ Agregar gasto fijo</button>`}
-      <p class="muted" style="margin-top:14px">El ahorro real se detecta cuando sale una transferencia hacia Fintual. Como ya salió de tu cuenta, no se descuenta otra vez del disponible.</p>`;
+      <p class="muted" style="margin-top:14px">Si quieres reservar ahorro desde el día 1, agrégalo como gasto fijo (por ejemplo “Ahorro Japón”) y usa FINTUAL como palabra clave.</p>`;
     return;
   }
 
@@ -1080,6 +1115,9 @@ function fijoForm(x,i){
       <div style="width:104px"><div class="wform-lbl">Día del mes</div>
         <input class="winput" id="fDia" type="text" inputmode="numeric" value="${x.dia||''}" placeholder="—"></div>
     </div>
+    <div class="wform-lbl">Palabra clave del pago (opcional)</div>
+    <input class="winput" id="fPatron" value="${(x.patron||'').replace(/"/g,'&quot;')}" placeholder="Ej: ENTEL, FINTUAL, COMUNIDAD FELIZ">
+    <div class="wform-lbl" style="color:var(--ink-faint);font-weight:400;margin-top:6px">Si un movimiento contiene esta palabra, Camileando lo enlaza a este fijo y usa el monto real.</div>
     <div class="wactions">
       <button class="wbtn primary" onclick="saveFijo('${i}')">Guardar</button>
       ${i!=='new'?`<button class="wbtn ghost" onclick="removeFijo('${i}')">Eliminar</button>`:''}
@@ -1094,13 +1132,14 @@ function saveFijo(i){
   const monto=parseInt((document.getElementById("fMonto").value||"").replace(/[^\d]/g,"")||"0",10);
   const diaRaw=(document.getElementById("fDia").value||"").replace(/[^\d]/g,"");
   const dia=diaRaw?parseInt(diaRaw,10):"";
+  const patron=(document.getElementById("fPatron").value||"").trim().toUpperCase();
   if(!nombre||!monto) return;
-  if(i==='new') fijos.push({id:"tmp-"+Date.now(), nombre:nombre, monto:monto, dia:dia, pagadoMes:""});
-  else { const f=fijos.find(x=>String(x.id)===String(i)); if(f){ f.nombre=nombre; f.monto=monto; f.dia=dia; } }
+  if(i==='new') fijos.push({id:"tmp-"+Date.now(), nombre:nombre, monto:monto, dia:dia, patron:patron, activo:true, pagadoMes:"", montoReal:0});
+  else { const f=fijos.find(x=>String(x.id)===String(i)); if(f){ f.nombre=nombre; f.monto=monto; f.dia=dia; f.patron=patron; } }
   editFijo=null; recompute();
   renderConfig(); renderFijosMini(); renderHero(); renderWish();
-  if(i==='new') apiPost("saveFijo",{fijo:{nombre:nombre, monto:monto, dia:dia}});
-  else apiPost("saveFijo",{fijo:{id:i, nombre:nombre, monto:monto, dia:dia}});
+  if(i==='new') apiPost("saveFijo",{fijo:{nombre:nombre, monto:monto, dia:dia, patron:patron}});
+  else apiPost("saveFijo",{fijo:{id:i, nombre:nombre, monto:monto, dia:dia, patron:patron}});
 }
 function removeFijo(i){ const idx=fijos.findIndex(x=>String(x.id)===String(i)); if(idx>=0) fijos.splice(idx,1); editFijo=null; recompute(); renderConfig(); renderFijosMini(); renderHero(); renderWish(); apiPost("deleteFijo",{id:i}); }
 
