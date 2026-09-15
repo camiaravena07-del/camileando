@@ -504,7 +504,9 @@ const catColors = {
 };
 const catIcon = {
   "Comida":"🍜","Cosas que no necesito":"🛍️","Ropa":"👗","Doctor":"🩺",
-  "Gatitos":"🐱","Uñas":"💅","Negocio":"💼","Otros":"✦","Servicios":"💧","Sin clasificar":"❓"
+  "Gatitos":"🐱","Uñas":"💅","Negocio":"💼","Otros":"✦","Servicios":"💧","Sin clasificar":"❓",
+  "Suscripciones":"🎧","Transporte":"🚕","Hogar":"🏠","Seguro para el viaje":"🧳",
+  "Ahorro":"🌱","Ingreso":"↘","Reembolso":"↩","Transferencia propia":"⇄"
 };
 let colorSeq=0;
 function colorFor(cat){ if(!catColors[cat]) catColors[cat]=palette[colorSeq++ % palette.length]; return catColors[cat]; }
@@ -599,12 +601,12 @@ function shiftMonth(dir){
 }
 
 /* ===== CÁLCULOS ===== */
-const esGastoVariable = m => !m.fijo && m.tipo !== "pago_tarjeta";
+const esGastoVariable = m => m.tipo === "gasto";
 function recompute(){
   const mm = movsMes();
   variableTotal = mm.filter(esGastoVariable).reduce((a,m)=>a+m.monto,0);
   fijosTotal = fijos.reduce((a,f)=>a+f.monto,0);
-  gastadoTotal = variableTotal + fijosTotal;
+  gastadoTotal = variableTotal;
   pagoTarjeta = mm.filter(m=>m.tipo==="pago_tarjeta").reduce((a,m)=>a+m.monto,0);
   creditoUsado = mm.filter(m=>m.medio==="credito" && esGastoVariable(m)).reduce((a,m)=>a+m.monto,0);
   discBudget = config.saldoCuenta;                    // referencia del anillo
@@ -749,7 +751,13 @@ function movCatLabel(m){
 }
 function medioTag(m){
   if(m.tipo==="pago_tarjeta") return `<span class="tag transf">Pago tarjeta</span>`;
-  const map={debito:["deb","Débito"],credito:["cred","Crédito"],transferencia:["deb","Débito"]};
+  if(m.tipo==="ingreso") return `<span class="tag transf">Ingreso</span>`;
+  if(m.tipo==="ahorro") return `<span class="tag transf">Ahorro</span>`;
+  if(m.tipo==="ahorro_retiro") return `<span class="tag transf">Retiro ahorro</span>`;
+  if(m.tipo==="transferencia_salida") return `<span class="tag transf">Transferencia</span>`;
+  if(m.tipo==="transferencia_propia") return `<span class="tag transf">Transferencia propia</span>`;
+  if(m.tipo==="reembolso") return `<span class="tag transf">Reembolso</span>`;
+  const map={debito:["deb","Débito"],credito:["cred","Crédito"],transferencia:["deb","Transferencia"]};
   const x=map[m.medio]||["deb","Débito"]; return `<span class="tag ${x[0]}">${x[1]}</span>`;
 }
 function renderMovs(){
@@ -761,6 +769,7 @@ function renderMovs(){
   });
   document.getElementById("movList").innerHTML = list.map(m=>{
     const isTC = m.tipo==="pago_tarjeta";
+    const isEntrada = ["ingreso","reembolso","ahorro_retiro"].includes(m.tipo);
     const label = movCatLabel(m);
     const sin = label==="Sin clasificar";
     const col = colorFor(label);
@@ -770,7 +779,7 @@ function renderMovs(){
       <div class="mid"><div class="nm">${m.comercio}</div>
         <div class="meta">${fecha} ${medioTag(m)} ${isTC?'':(sin?'<span class="tag nc">sin clasificar</span>':`<span class="tag">${label}</span>`)} ${m.gusto?'<span class="tag gusto">gusto</span>':''} ${m.fijo?'<span class="tag fijo">fijo</span>':''}</div>
       </div>
-      <div class="am" style="${isTC?'color:var(--ink-faint)':''}">${CLP(m.monto)}</div>
+      <div class="am" style="${isTC?'color:var(--ink-faint)':(isEntrada?'color:var(--ok)':'')}">${isEntrada?'+':''}${CLP(m.monto)}</div>
     </div>`;
   }).join("") || `<p class="muted">No hay movimientos con ese filtro este mes.</p>`;
 }
@@ -963,7 +972,7 @@ function renderConfig(){
           <div class="check ${x.pagadoMes===mesActivo?'done':''}" onclick="event.stopPropagation();togglePagado('${x.id}')">${x.pagadoMes===mesActivo?'✓':''}</div>
         </div>`).join("")}
       ${editFijo==='new' ? fijoForm({}, 'new') : `<button class="addbtn" onclick="openEditFijo('new')">+ Agregar gasto fijo</button>`}
-      <p class="muted" style="margin-top:14px">Tu ahorro (transferencia a inversión) va aparte, como meta del mes.</p>`;
+      <p class="muted" style="margin-top:14px">El ahorro real se detecta cuando sale una transferencia hacia Fintual. Como ya salió de tu cuenta, no se descuenta otra vez del disponible.</p>`;
     return;
   }
 
